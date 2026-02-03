@@ -1,37 +1,35 @@
 # Playto Community Feed
 
-A community feed prototype with threaded discussions and a dynamic leaderboard, built with Django + React.
+A Reddit-style community feed with threaded discussions and a real-time leaderboard. Built with Django + React to solve three critical engineering challenges: N+1 queries, race conditions, and dynamic aggregation.
 
-## Architecture Overview
+🔗 **Live Demo**: [Your deployment URL here]
 
-```
-┌─────────────────────────────────────────────┐
-│                   React SPA                  │
-│  (Feed, Post Detail, Comments, Leaderboard)  │
-│           Tailwind CSS · Axios               │
-└──────────────────┬──────────────────────────┘
-                   │ REST API (JSON)
-                   ▼
-┌─────────────────────────────────────────────┐
-│              Django + DRF                    │
-│   Auth · Posts · Comments · Likes · Karma   │
-└──────────────────┬──────────────────────────┘
-                   │ ORM
-                   ▼
-┌─────────────────────────────────────────────┐
-│              SQLite (default)                │
-│   Posts · Comments · Likes · KarmaEvents    │
-└─────────────────────────────────────────────┘
-```
+---
 
-## Key Technical Decisions
+## Features
 
-| Challenge | Solution |
-|-----------|----------|
-| **N+1 Comments** | Materialized path on Comment model. Entire comment tree fetched in 1 query, reconstructed in Python. |
-| **Double-Like Prevention** | DB-level `UNIQUE(user, target_type, target_id)` constraint catches race conditions via `IntegrityError`. |
-| **Leaderboard (24h)** | Append-only `KarmaEvent` log. Leaderboard is a `GROUP BY + SUM` aggregation filtered to last 24h — no cached field. |
-| **Concurrency on Like Count** | `F()` expressions for atomic increment/decrement — safe against simultaneous updates. |
+- 📝 Create posts and threaded comments (unlimited nesting)
+- ❤️ Like posts and comments
+- 🏆 Real-time leaderboard (top 5 users by 24h karma)
+- 🔐 User authentication
+- ⚡ Optimistic UI updates
+- 🎨 Modern, responsive design
+
+---
+
+## Tech Stack
+
+**Backend:**
+- Django 4.2 + Django REST Framework
+- SQLite (dev) / PostgreSQL (production)
+- Session-based authentication
+
+**Frontend:**
+- React 18
+- Tailwind CSS
+- Axios for API calls
+
+---
 
 ## Running Locally
 
@@ -40,61 +38,135 @@ A community feed prototype with threaded discussions and a dynamic leaderboard, 
 - Node.js 18+
 - npm
 
-### 1. Backend Setup
+### Backend Setup
 
 ```bash
 cd backend
-python -m venv venv
-source venv/bin/activate       # Windows: venv\Scripts\activate
+
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
 
-# Create database & tables
+# Run migrations
 python manage.py migrate
 
-# Seed with sample data (users, posts, comments, likes)
+# Create demo data (optional)
 python manage.py seed_data
 
-# Start Django dev server
+# Start server
 python manage.py runserver
-# → http://localhost:8000/api/
 ```
 
-### 2. Frontend Setup
+Backend runs at: `http://localhost:8000`
+
+### Frontend Setup
 
 ```bash
 cd frontend
+
+# Install dependencies
 npm install
 
-# Set the API base URL for development
-# Create .env file or just run (it defaults to /api which proxies via CRA)
+# Start development server
 npm start
-# → http://localhost:3000
 ```
 
-### 3. Connect Frontend to Backend
+Frontend runs at: `http://localhost:3000`
 
-Create `frontend/.env`:
-```
-REACT_APP_API_BASE=http://localhost:8000/api
-```
+### Demo Accounts
 
-Or, if you prefer, add a proxy to `frontend/package.json`:
-```json
-"proxy": "http://localhost:8000"
-```
-
-Then the React app will automatically proxy `/api/*` to Django.
-
-### Demo Accounts (created by seed_data)
+Login with any of these:
 
 | Username | Password |
 |----------|----------|
 | alice | password123 |
 | bob | password123 |
 | charlie | password123 |
-| diana | password123 |
-| eve | password123 |
-| frank | password123 |
+
+---
+
+## Project Structure
+
+```
+playto-community/
+├── backend/
+│   ├── playto_project/      # Django settings
+│   ├── community/           # Main app
+│   │   ├── models.py        # Post, Comment, Like, KarmaEvent
+│   │   ├── views.py         # API endpoints
+│   │   ├── serializers.py   # DRF serializers
+│   │   └── management/commands/seed_data.py
+│   ├── manage.py
+│   └── requirements.txt
+├── frontend/
+│   ├── src/
+│   │   ├── components/      # React components
+│   │   ├── api/            # API client
+│   │   └── context/        # Auth context
+│   ├── package.json
+│   └── tailwind.config.js
+├── README.md
+└── EXPLAINER.md
+```
+
+---
+
+## Key Technical Solutions
+
+### 1. N+1 Query Problem (Comments)
+**Challenge**: Loading 50 nested comments shouldn't require 50+ database queries.
+
+**Solution**: Materialized Path pattern
+- Each comment stores its full ancestor chain: `"42.55.61"`
+- Entire tree fetched in **2 queries** (1 for post, 1 for all comments)
+- Tree reconstructed in Python in O(n) time
+
+```python
+# Single query for all comments
+comments = Comment.objects.filter(post=post).order_by('path')
+
+# Tree assembly in Python
+for comment in comments:
+    if comment.parent_id is None:
+        root_comments.append(comment)
+    else:
+        parent_node[comment.parent_id]['children'].append(comment)
+```
+
+### 2. Race Conditions (Double-Likes)
+**Challenge**: Two simultaneous like requests shouldn't create duplicate likes.
+
+**Solution**: Database-level unique constraint
+```python
+class Like(models.Model):
+    class Meta:
+        unique_together = ('user', 'target_type', 'target_id')
+```
+
+The database rejects duplicate inserts with `IntegrityError`, preventing double-likes even under concurrent load.
+
+### 3. Dynamic Leaderboard (24h Karma)
+**Challenge**: Calculate top 5 users by last 24h karma without cached fields.
+
+**Solution**: Event sourcing with aggregate query
+```python
+cutoff = timezone.now() - timedelta(hours=24)
+
+leaderboard = (
+    KarmaEvent.objects
+    .filter(created_at__gte=cutoff)
+    .values('user_id', 'user__username')
+    .annotate(karma=Sum('amount'))
+    .order_by('-karma')[:5]
+)
+```
+
+See `EXPLAINER.md` for detailed technical explanations.
+
+---
 
 ## API Endpoints
 
@@ -103,60 +175,120 @@ Then the React app will automatically proxy `/api/*` to Django.
 | POST | `/api/auth/register/` | Register new user |
 | POST | `/api/auth/login/` | Login |
 | POST | `/api/auth/logout/` | Logout |
-| GET | `/api/auth/me/` | Current user info |
-| GET | `/api/posts/` | List posts (paginated) |
+| GET | `/api/posts/` | List posts |
 | POST | `/api/posts/` | Create post |
-| GET | `/api/posts/:id/` | Get post with comment tree |
-| POST | `/api/posts/:id/comments/` | Create comment/reply |
-| POST | `/api/like/` | Toggle like (post or comment) |
-| GET | `/api/leaderboard/` | Top 5 users by 24h karma |
+| GET | `/api/posts/:id/` | Get post with comments |
+| POST | `/api/posts/:id/comments/` | Create comment |
+| POST | `/api/like/` | Toggle like |
+| GET | `/api/leaderboard/` | Top 5 users (24h) |
 
-## Deployment (Railway)
+---
 
-1. Push repo to GitHub
-2. Create a Railway project → "Deploy from GitHub repo"
-3. Set environment variables:
-   - `SECRET_KEY=your-production-secret`
-   - `DEBUG=False`
-4. Set build command: `bash build.sh`
-5. Set start command: `cd backend && gunicorn playto_project.wsgi:application --bind 0.0.0.0:$PORT`
+## Deployment
 
-The build script installs Python + Node deps, builds the React app, runs migrations, and seeds data.
+### Railway (Recommended)
 
-## Project Structure
+1. Fork this repository
+2. Create a Railway account at https://railway.app
+3. Click "New Project" → "Deploy from GitHub repo"
+4. Select your fork
+5. Railway auto-detects Django and deploys automatically
+6. Add environment variables:
+   - `SECRET_KEY`: Generate with `python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"`
+   - `DEBUG`: `False`
+   - `ALLOWED_HOSTS`: Your Railway domain (e.g., `your-app.railway.app`)
 
+The `build.sh` script handles:
+- Installing Python + Node dependencies
+- Building the React frontend
+- Running migrations
+- Seeding demo data
+
+### Alternative: Vercel + Railway
+
+**Backend (Railway):**
+- Deploy backend folder as separate service
+- Add PostgreSQL addon
+
+**Frontend (Vercel):**
+- Deploy frontend folder
+- Set `REACT_APP_API_BASE` environment variable to your Railway backend URL
+
+---
+
+## Testing the Technical Constraints
+
+### Test N+1 Prevention
+```bash
+python manage.py shell
 ```
-playto/
-├── backend/
-│   ├── playto_project/          # Django project config
-│   │   ├── settings.py
-│   │   ├── urls.py
-│   │   └── wsgi.py
-│   ├── community/               # Main Django app
-│   │   ├── models.py            # Post, Comment, Like, KarmaEvent
-│   │   ├── views.py             # All API views
-│   │   ├── serializers.py       # DRF serializers
-│   │   ├── urls.py              # URL routing
-│   │   └── management/commands/
-│   │       └── seed_data.py     # Demo data seeder
-│   └── requirements.txt
-├── frontend/
-│   ├── src/
-│   │   ├── api/index.js         # Axios API client
-│   │   ├── context/
-│   │   │   └── AuthContext.js   # Auth state management
-│   │   └── components/
-│   │       ├── App.js           # Main app + feed
-│   │       ├── PostDetail.js    # Single post view
-│   │       ├── CommentTree.js   # Recursive comment renderer
-│   │       ├── LikeButton.js    # Optimistic like toggle
-│   │       ├── Leaderboard.js   # Top 5 widget
-│   │       └── AuthModal.js     # Login/Register modal
-│   ├── tailwind.config.js
-│   └── package.json
-├── Procfile                     # Railway/Render start command
-├── build.sh                     # CI build script
-├── README.md
-└── EXPLAINER.md                 # Technical deep-dive
+
+```python
+from community.models import Post, Comment
+from django.db import connection, reset_queries
+
+reset_queries()
+post = Post.objects.select_related('author').get(pk=1)
+comments = Comment.objects.filter(post=post).select_related('author').order_by('path')
+list(comments)  # Force query execution
+
+print(f"Queries: {len(connection.queries)}")  # Should be 2
 ```
-# Community-Feed
+
+### Test Race Condition Protection
+Open browser console and run:
+```javascript
+// Try to like the same post twice simultaneously
+Promise.all([
+  fetch('/api/like/', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target_type: 'post', target_id: 1 })
+  }),
+  fetch('/api/like/', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target_type: 'post', target_id: 1 })
+  })
+]).then(r => Promise.all(r.map(x => x.json())))
+  .then(console.log);
+// One returns "liked", other returns "already_liked"
+```
+
+### Test Leaderboard Calculation
+```bash
+python manage.py shell
+```
+
+```python
+from community.models import KarmaEvent
+from django.utils import timezone
+from datetime import timedelta
+from django.db.models import Sum
+
+cutoff = timezone.now() - timedelta(hours=24)
+leaderboard = (
+    KarmaEvent.objects
+    .filter(created_at__gte=cutoff)
+    .values('user_id', 'user__username')
+    .annotate(karma=Sum('amount'))
+    .order_by('-karma')[:5]
+)
+
+print(leaderboard.query)  # See the SQL
+print(list(leaderboard))  # See the results
+```
+
+---
+
+## Credits
+
+Built for the Playto Engineering Challenge by [Your Name]
+
+---
+
+## License
+
+MIT

@@ -7,7 +7,7 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production-a
 
 DEBUG = os.environ.get('DEBUG', 'True').lower() == 'true'
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*').split(',')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -38,7 +38,7 @@ ROOT_URLCONF = 'playto_project.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [os.path.join(BASE_DIR, '..', 'frontend', 'build')],
+        'DIRS': [os.path.join(BASE_DIR, 'frontend_build')],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -61,7 +61,11 @@ DATABASES = {
     }
 }
 
-# Password validation
+# Use PostgreSQL in production if DATABASE_URL is provided
+import dj_database_url
+if 'DATABASE_URL' in os.environ:
+    DATABASES['default'] = dj_database_url.config(conn_max_age=600, ssl_require=True)
+
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
     {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
@@ -75,34 +79,48 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = '/static/'
-STATIC_ROOT = os.path.join(BASE_DIR, '..', 'staticfiles')
-STATICFILES_STORAGE = 'whitenoise.storage.WhiteNoiseStaticFilesStorage'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+STATICFILES_DIRS = [os.path.join(BASE_DIR, 'frontend_build', 'static')] if os.path.exists(os.path.join(BASE_DIR, 'frontend_build', 'static')) else []
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# DRF Configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',
+        'rest_framework.permissions.IsAuthenticated',
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
     'PAGE_SIZE': 20,
 }
 
-# CORS - allow the React dev server
+# CORS - allow frontend domains
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
 ]
+
+# Add production domain if provided
+if 'FRONTEND_URL' in os.environ:
+    CORS_ALLOWED_ORIGINS.append(os.environ['FRONTEND_URL'])
+
 CORS_ALLOW_CREDENTIALS = True
 
-CSRF_TRUSTED_ORIGINS = [
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-]
+CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS.copy()
 
-# Serve React app from Django in production
-FRONTEND_BUILD_DIR = os.path.join(BASE_DIR, '..', 'frontend', 'build')
+# Add Railway domain for CSRF
+if 'RAILWAY_STATIC_URL' in os.environ:
+    railway_url = os.environ['RAILWAY_STATIC_URL']
+    if railway_url not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(railway_url)
+
+# Security settings for production
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY'

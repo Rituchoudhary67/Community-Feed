@@ -1,19 +1,29 @@
 #!/bin/bash
 set -e
 
-# Install backend deps
+echo "===== Installing Backend Dependencies ====="
 cd backend
 pip install -r requirements.txt
 
-# Install frontend deps & build
+echo "===== Installing Frontend Dependencies ====="
 cd ../frontend
 npm install
+
+echo "===== Building React Frontend ====="
 npm run build
 
-# Copy React build into backend static serving path
-cp -r build ../backend/frontend_build
+echo "===== Copying Frontend Build ====="
+mkdir -p ../backend/frontend_build
+cp -r build/* ../backend/frontend_build/
 
-# Run migrations
+echo "===== Running Database Migrations ====="
 cd ../backend
-python manage.py migrate --run-syncdb
-python manage.py seed_data || true
+python manage.py migrate --noinput
+
+echo "===== Collecting Static Files ====="
+python manage.py collectstatic --noinput
+
+echo "===== Seeding Demo Data ====="
+python manage.py seed_data || echo "Seed data already exists or failed"
+
+echo "===== Build Complete ====="
