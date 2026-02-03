@@ -106,21 +106,24 @@ CORS_ALLOWED_ORIGINS = [
 if 'FRONTEND_URL' in os.environ:
     CORS_ALLOWED_ORIGINS.append(os.environ['FRONTEND_URL'])
 
+# Add Railway domain
+railway_url = os.environ.get('RAILWAY_PUBLIC_DOMAIN', '')
+if railway_url:
+    CORS_ALLOWED_ORIGINS.append(f'https://{railway_url}')
+
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS.copy()
 
-# Add Railway domain for CSRF
-if 'RAILWAY_STATIC_URL' in os.environ:
-    railway_url = os.environ['RAILWAY_STATIC_URL']
-    if railway_url not in CSRF_TRUSTED_ORIGINS:
-        CSRF_TRUSTED_ORIGINS.append(railway_url)
+# Add CSRF trusted from env variable
+if 'CSRF_TRUSTED_ORIGINS' in os.environ:
+    CSRF_TRUSTED_ORIGINS.append(os.environ['CSRF_TRUSTED_ORIGINS'])
 
-# Security settings for production
+# Security settings for production - REMOVED HTTPS REDIRECT
 if not DEBUG:
-    SECURE_SSL_REDIRECT = True
+    # Don't force HTTPS redirect - Railway handles this
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
-    X_FRAME_OPTIONS = 'DENY'
