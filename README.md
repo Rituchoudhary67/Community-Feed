@@ -280,15 +280,3 @@ leaderboard = (
 print(leaderboard.query)  # See the SQL
 print(list(leaderboard))  # See the results
 ```
-
----
-
-## Credits
-
-Built for the Playto Engineering Challenge by [Your Name]
-
----
-
-## License
-
-MIT
